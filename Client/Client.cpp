@@ -160,15 +160,14 @@ bool Client::registerUser(const SOCKET& sock, struct sockaddr_in* sa, char* uuid
 		}
 		fHandler.closeFile(newFile);
 	}
-	else if (fHandler.isExistent(TRANSFER_INFO)){
-		if (!fHandler.openFile(TRANSFER_INFO, newFile, false))
-			return false;
-		std::getline(newFile, username);
-		std::getline(newFile, username); // Second line.
-		fHandler.closeFile(newFile);
+	else if (!secondLineExists){
+		std::cout << "Enter your username: ";
+		//std::getline(newFile, username);
+		std::cin >> username;
+		std::cout << "You entered: " << username << std::endl; //Debugging
 	}
 	else {
-		std::cerr << "Error: Transfer.info and Me.info files do not exist. " << std::endl;
+		std::cerr << "Error: Me.info file does not exist, and name was not for registration." << std::endl;
 		return false;
 	}
 	

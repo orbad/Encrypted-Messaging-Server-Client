@@ -20,9 +20,10 @@ print_lock = threading.Lock()
 class Server:
     MAX_TRIES = 3
 
-    def __init__(self, host, port) -> None:
+    def __init__(self, host, port, messagePort) -> None:
         self.host = host
         self.port = port
+        self.messagePort = messagePort
         self.loggedUser = False
         self.database = Database(DB_NAME)
         self.AESKey = ''

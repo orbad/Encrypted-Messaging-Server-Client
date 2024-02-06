@@ -7,7 +7,7 @@ import os
 def getPort(filename):
     """
     Gets the port from the file.
-    If file doesn't exist, defaults to port 1357. 
+    If file doesn't exist, defaults to port 1256.
     """
 
     port = DEFAULT_PORT
@@ -18,6 +18,22 @@ def getPort(filename):
     except Exception as e:
         print(f'Error opening file: {e}')
     return port
+
+def getMessagePort(filename):
+    """
+    Gets the message server port from the file.
+    If file doesn't exist, defaults to port 1257.
+    """
+
+    port = DEFAULT_MSG_PORT
+    try:
+        with open(filename) as f:
+            readPort = f.readline().strip()
+            port = int(readPort)
+    except Exception as e:
+        print(f'Error opening file: {e}')
+    return port
+
 
 
 def sendPacket(socket, buffer):
