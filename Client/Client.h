@@ -23,6 +23,7 @@ Client.h
 
 #define PACKET_SIZE 1024
 #define USER_LENGTH 255
+#define PASSWORD_LENGTH 32
 #define ME_INFO "./me.info"
 #define TRANSFER_INFO "./transfer.info"
 #define PRIV_KEY "./priv.key"
@@ -38,8 +39,8 @@ Client.h
 
 
 class Client {
-	enum Request_Code { REGISTER_REQUEST = 1025, PUB_KEY_SEND = 1026, LOGIN_REQUEST = 1027, FILE_SEND = 1028, CRC_OK = 1029, CRC_INVALID_RETRY = 1030, CRC_INVALID_EXIT = 1031 };
-	enum Response_Code { REGISTER_SUCCESS = 2100, REGISTER_ERROR = 2101,PUB_KEY_RECEVIED = 2102, FILE_OK_CRC = 2103, MSG_RECEIVED = 2104, LOGIN_SUCCESS = 2105, LOGIN_ERROR = 2106, GENERAL_ERROR = 2107 };
+	enum Request_Code { REGISTER_REQUEST = 1024, PUB_KEY_SEND = 1028, LOGIN_REQUEST = 1027, MESSAGE_SEND = 1029}; // Login would need to be dealt down the road
+	enum Response_Code { REGISTER_SUCCESS = 1600, REGISTER_ERROR = 1601,PUB_KEY_RECEVIED = 1603, PUB_KEY_ACK = 1604, MSG_RECEIVED = 1605, LOGIN_SUCCESS = 2105, LOGIN_ERROR = 2106, GENERAL_ERROR = 1609 }; // Login would need to be dealt down the road
 	bool sendPubKey(const SOCKET&, struct sockaddr_in*, unsigned char*, char*) const;
 	bool loadClientInfo(char* uuid) const;  // New method declaration
 	bool decryptAESKey(const char* uuid, const char* encryptedAESKey, unsigned char* AESKey) const;
