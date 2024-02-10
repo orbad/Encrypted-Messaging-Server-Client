@@ -19,10 +19,13 @@ class Database:
                 self.clients = [line.strip().split(':') for line in file.readlines()]
 
     def saveClientData(self):
-        """Save the clients data back to the file."""
-        with open(self.file_name, 'w') as file:
-            for client in self.clients:
-                file.write(':'.join(client) + '\n')
+        try:
+            with open(self.file_name, 'w') as file:
+                for client in self.clients:
+                    line = ':'.join(map(str, client)) + '\n'
+                    file.write(line)
+        except Exception as e:
+            print(f"Failed to save client data: {e}")
 
     def registerClient(self, id, name, passwordHash, lastSeen):
         """Registers a new client or updates an existing one based on ID."""
@@ -44,10 +47,10 @@ class Database:
         """Checks if a user with the given ID exists."""
         return any(client[0] == uuid for client in self.clients)
 
-    def getUserInfo(self, username):
+    def getUserInfo(self, username, hashed_password):
         """Retrieves user information based on the username."""
         for client in self.clients:
-            if client[1] == username:
+            if client[1] == username and client[2] == hashed_password:
                 return {
                     "UUID": client[0],
                     "Name": client[1],

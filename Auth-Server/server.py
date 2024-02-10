@@ -11,8 +11,8 @@ import uuid
 from encryptor import Encryptor
 from _thread import *
 import threading
-import crc
-import struct
+import hashlib
+
 
 print_lock = threading.Lock()
 
@@ -64,21 +64,34 @@ class Server:
 
         requestedService = currRequest.code
 
-        if requestedService == RequestCode.REGISTER_REQUEST.value:
+        if requestedService == RequestCode.CLIENT_REGISTER_REQUEST.value:
             self.registerUser(conn, currRequest)
         elif requestedService == RequestCode.LOGIN_REQUEST.value:  # Handle login requests
             self.loginUser(conn, currRequest)
-        elif requestedService == RequestCode.PUB_KEY_SEND.value or RequestCode.FILE_SEND.value:
-            self.fileUpload(conn, currRequest)
+        # elif requestedService == RequestCode.PUB_KEY_SEND.value or RequestCode.FILE_SEND.value:
+        #     self.fileUpload(conn, currRequest)
         else:
             return
+
+    def hash_password(self, password):
+        # Hash a password using SHA-256
+        sha_signature = hashlib.sha256(password.encode()).digest()
+        return sha_signature
 
     def registerUser(self, conn, currRequest):
         """ Registers user. If name exists, returns error.
             Otherwise, creates UUID, saves in memory and DB. """
         currResponse = Response(
             ResponseCode.REGISTER_SUCCESS.value, UUID_BYTES)
-        user = currRequest.payload.decode('utf-8')
+        try:
+            parts = currRequest.payload.split(b'\x00', 1)  # Split by the first null byte
+            user = parts[0].decode('utf-8')  # Decode the username part
+            password = parts[1].decode('utf-8') if len(parts) > 1 else ''  # Decode the password part, if present
+        except Exception as e:
+            print(f'Error decoding payload: {e}')
+            # Handle decoding error (e.g., send an error response back to the client)
+            return
+
         try:
             if self.database.isExistentUser(user):
                 currResponse.code = ResponseCode.REGISTER_ERROR.value
@@ -88,8 +101,8 @@ class Server:
 
             else:
                 id = bytes.fromhex(uuid.uuid4().hex)
-                self.database.registerClient(id, user)
-                self.database.setLastSeen(id, str(datetime.now()))
+                hashed_password = self.hash_password(password)
+                self.database.registerClient(id.hex(), user, hashed_password.hex(), str(datetime.now()))
                 currResponse.payload = id
                 print(f'Successfully registered {user} with UUID of {id.hex()}.')
                 data = currResponse.littleEndianPack()
@@ -164,83 +177,83 @@ class Server:
         data = currResponse.littleEndianPack()
         sendPacket(conn, data)  # Send response back to the client
 
-    def fileUpload(self, conn, currRequest):
-        """ Handles upload of file, including encryption. """
-        if currRequest.code == RequestCode.PUB_KEY_SEND.value:
-            AESKey = self.sendPubKey(conn, currRequest)
-            buffer = conn.recv(PACKET_SIZE)
-            currRequest.littleEndianUnpack(buffer)
-        else:
-            AESKey = self.AESKey
-        crc_confirmed = False
-        tries = 0
-
-        while tries < Server.MAX_TRIES and not crc_confirmed:
-            if currRequest.code != RequestCode.FILE_SEND.value:
-                return
-            contentSize = currRequest.payload[:SIZE_UINT32_T]
-            filename = currRequest.payload[SIZE_UINT32_T:SIZE_UINT32_T +
-                                                         MAX_FILE_LEN].decode('utf-8')
-            enc_content = currRequest.payload[SIZE_UINT32_T + MAX_FILE_LEN:]
-            currPayloadSize = min(currRequest.payloadSize,
-                                  PACKET_SIZE - REQ_HEADER_SIZE)
-
-            sizeLeft = currRequest.payloadSize - currPayloadSize
-            while sizeLeft > 0:
-                tempPayload = conn.recv(PACKET_SIZE)
-                currPayloadSize = min(sizeLeft, PACKET_SIZE)
-                enc_content += tempPayload[:currPayloadSize]
-                sizeLeft -= currPayloadSize
-
-            wrapper = Encryptor()
-            dec_content = wrapper.decryptAES(enc_content, AESKey)
-
-            # Calculate checksum
-            digest = crc.crc32()
-            digest.update(dec_content)
-            checksum = digest.digest()
-
-            # Send Response 2103
-            resPayloadSize = 2 * SIZE_UINT32_T + MAX_FILE_LEN
-            newResponse = Response(
-                ResponseCode.FILE_OK_CRC.value, resPayloadSize)
-            newResponse.payload = contentSize + filename.encode('utf-8')
-            newResponse.payload += struct.pack('<I', checksum)
-            buffer = newResponse.littleEndianPack()
-            sendPacket(conn, buffer)
-
-            # Receive confirmation for CRC.
-            buffer = conn.recv(PACKET_SIZE)
-            currRequest.littleEndianUnpack(buffer)
-            if currRequest.code == RequestCode.CRC_OK.value:
-                crc_confirmed = True
-                print("CRC confirmed, backing up the file.")
-            elif currRequest.code == RequestCode.CRC_INVALID_RETRY.value:
-                tries += 1
-                print("Failed to confirm CRC, waiting for user to try again.")
-            elif currRequest.code == RequestCode.CRC_INVALID_EXIT.value:
-                print("Failed to confirm CRC after total of 4 invalid CRC.\nFile transfer is not verified.")
-                return
-        # End of while loop
-
-        finalRes = Response(ResponseCode.MSG_RECEIVED.value, 0)
-        buffer = finalRes.littleEndianPack()
-
-        createDirectory('backup')
-        dec_filename = filename.split("\x00")[0]
-        pathname = 'backup\\' + dec_filename
-        try:
-            f = open(pathname, 'wb')
-            f.write(dec_content)
-            f.close()
-            self.database.registerFile(
-                currRequest.uuid, dec_filename, pathname, 1)
-            # print(self.database.executeCommand("SELECT * FROM clients"))
-            # print(self.database.executeCommand("SELECT * FROM files"))
-            print(f'Successfully backed up file {dec_filename}.')
-            sendPacket(conn, buffer)
-        except Exception as e:
-            currResponse = Response(ResponseCode.GENERAL_ERROR.value, 0)  # No UUID if user didn't appear in DB
-            buffer = currResponse.littleEndianPack()
-            sendPacket(conn, buffer)
-            print(f'Error: Failed to write to backup - {e}.')
+    # def fileUpload(self, conn, currRequest):
+    #     """ Handles upload of file, including encryption. """
+    #     if currRequest.code == RequestCode.PUB_KEY_SEND.value:
+    #         AESKey = self.sendPubKey(conn, currRequest)
+    #         buffer = conn.recv(PACKET_SIZE)
+    #         currRequest.littleEndianUnpack(buffer)
+    #     else:
+    #         AESKey = self.AESKey
+    #     crc_confirmed = False
+    #     tries = 0
+    #
+    #     while tries < Server.MAX_TRIES and not crc_confirmed:
+    #         if currRequest.code != RequestCode.FILE_SEND.value:
+    #             return
+    #         contentSize = currRequest.payload[:SIZE_UINT32_T]
+    #         filename = currRequest.payload[SIZE_UINT32_T:SIZE_UINT32_T +
+    #                                                      MAX_FILE_LEN].decode('utf-8')
+    #         enc_content = currRequest.payload[SIZE_UINT32_T + MAX_FILE_LEN:]
+    #         currPayloadSize = min(currRequest.payloadSize,
+    #                               PACKET_SIZE - REQ_HEADER_SIZE)
+    #
+    #         sizeLeft = currRequest.payloadSize - currPayloadSize
+    #         while sizeLeft > 0:
+    #             tempPayload = conn.recv(PACKET_SIZE)
+    #             currPayloadSize = min(sizeLeft, PACKET_SIZE)
+    #             enc_content += tempPayload[:currPayloadSize]
+    #             sizeLeft -= currPayloadSize
+    #
+    #         wrapper = Encryptor()
+    #         dec_content = wrapper.decryptAES(enc_content, AESKey)
+    #
+    #         # Calculate checksum
+    #         digest = crc.crc32()
+    #         digest.update(dec_content)
+    #         checksum = digest.digest()
+    #
+    #         # Send Response 2103
+    #         resPayloadSize = 2 * SIZE_UINT32_T + MAX_FILE_LEN
+    #         newResponse = Response(
+    #             ResponseCode.FILE_OK_CRC.value, resPayloadSize)
+    #         newResponse.payload = contentSize + filename.encode('utf-8')
+    #         newResponse.payload += struct.pack('<I', checksum)
+    #         buffer = newResponse.littleEndianPack()
+    #         sendPacket(conn, buffer)
+    #
+    #         # Receive confirmation for CRC.
+    #         buffer = conn.recv(PACKET_SIZE)
+    #         currRequest.littleEndianUnpack(buffer)
+    #         if currRequest.code == RequestCode.CRC_OK.value:
+    #             crc_confirmed = True
+    #             print("CRC confirmed, backing up the file.")
+    #         elif currRequest.code == RequestCode.CRC_INVALID_RETRY.value:
+    #             tries += 1
+    #             print("Failed to confirm CRC, waiting for user to try again.")
+    #         elif currRequest.code == RequestCode.CRC_INVALID_EXIT.value:
+    #             print("Failed to confirm CRC after total of 4 invalid CRC.\nFile transfer is not verified.")
+    #             return
+    #     # End of while loop
+    #
+    #     finalRes = Response(ResponseCode.MSG_RECEIVED.value, 0)
+    #     buffer = finalRes.littleEndianPack()
+    #
+    #     createDirectory('backup')
+    #     dec_filename = filename.split("\x00")[0]
+    #     pathname = 'backup\\' + dec_filename
+    #     try:
+    #         f = open(pathname, 'wb')
+    #         f.write(dec_content)
+    #         f.close()
+    #         self.database.registerFile(
+    #             currRequest.uuid, dec_filename, pathname, 1)
+    #         # print(self.database.executeCommand("SELECT * FROM clients"))
+    #         # print(self.database.executeCommand("SELECT * FROM files"))
+    #         print(f'Successfully backed up file {dec_filename}.')
+    #         sendPacket(conn, buffer)
+    #     except Exception as e:
+    #         currResponse = Response(ResponseCode.GENERAL_ERROR.value, 0)  # No UUID if user didn't appear in DB
+    #         buffer = currResponse.littleEndianPack()
+    #         sendPacket(conn, buffer)
+    #         print(f'Error: Failed to write to backup - {e}.')

@@ -23,9 +23,10 @@ Client.h
 
 #define PACKET_SIZE 1024
 #define USER_LENGTH 255
-#define PASSWORD_LENGTH 32
+#define PASSWORD_LENGTH 255
 #define ME_INFO "./me.info"
 #define TRANSFER_INFO "./transfer.info"
+#define SRV_INFO "./srv.info"
 #define PRIV_KEY "./priv.key"
 #define PUB_KEY_LEN 160
 #define AES_KEY_LEN 16
@@ -43,14 +44,16 @@ class Client {
 	enum Response_Code { REGISTER_SUCCESS = 1600, REGISTER_ERROR = 1601,PUB_KEY_RECEVIED = 1603, PUB_KEY_ACK = 1604, MSG_RECEIVED = 1605, LOGIN_SUCCESS = 2105, LOGIN_ERROR = 2106, GENERAL_ERROR = 1609 }; // Login would need to be dealt down the road
 	bool sendPubKey(const SOCKET&, struct sockaddr_in*, unsigned char*, char*) const;
 	bool loadClientInfo(char* uuid) const;  // New method declaration
+	std::string SHA256HashString(std::string aString);
 	bool decryptAESKey(const char* uuid, const char* encryptedAESKey, unsigned char* AESKey) const;
 	std::string retrievePrivateKey() const;
 	unsigned char AESKey[AES_KEY_LEN] = {0};
 	char uuid[CLIENT_ID_SIZE] = { 0 };
 
 public:
-	bool getServerInfo(std::string&, uint16_t&) const;
+	bool getServersInfo(std::string&, uint16_t&, std::string&, uint16_t&) const;
 	bool registerUser(const SOCKET&, struct sockaddr_in*, char*) const;
-	bool sendFile(const SOCKET&, struct sockaddr_in*, char*, char*, bool) const;
+	// bool sendFile(const SOCKET&, struct sockaddr_in*, char*, char*, bool) const;
 	bool loginUser(const SOCKET & sock, struct sockaddr_in* sa, char*, char*, char*) const;  // New method declaration
 };
+
