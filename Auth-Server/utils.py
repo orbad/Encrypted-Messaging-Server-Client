@@ -29,7 +29,7 @@ def getMessagePort(filename):
     try:
         with open(filename) as f:
             readPort = f.readline().strip()
-            port = int(readPort)
+            port = int(readPort.split(':')[1])
     except Exception as e:
         print(f'Error opening file: {e}')
     return port

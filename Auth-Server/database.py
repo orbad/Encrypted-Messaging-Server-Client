@@ -2,6 +2,7 @@
     ID: 316307586 """
 
 import os.path
+from constants import *
 import sqlite3
 import binascii
 
@@ -27,6 +28,14 @@ class Database:
         except Exception as e:
             print(f"Failed to save client data: {e}")
 
+    def loadMessageServerKey(self):
+        try:
+            with open(MSG_INFO, 'r') as file:
+                content = file.readlines()
+                return content[3]
+        except Exception as e:
+            print(f"Failed to save client data: {e}")
+
     def registerClient(self, id, name, passwordHash, lastSeen):
         """Registers a new client or updates an existing one based on ID."""
         for client in self.clients:
@@ -47,16 +56,31 @@ class Database:
         """Checks if a user with the given ID exists."""
         return any(client[0] == uuid for client in self.clients)
 
+    def getUserPassword(self, uuid):
+        """Retrieves user secret key based on the UUID."""
+        found = False
+        for client in self.clients:
+            if client[0] == uuid:
+                found = True
+                return client[2]
+        if not found:
+            print(f"Failed login attempt with uuid: {uuid}, the username or password is incorrect.")
+        return None
+
     def getUserInfo(self, username, hashed_password):
         """Retrieves user information based on the username."""
+        found = False
         for client in self.clients:
             if client[1] == username and client[2] == hashed_password:
+                found = True
                 return {
                     "UUID": client[0],
                     "Name": client[1],
                     "PasswordHash": client[2],
                     "LastSeen": client[3]
                 }
+        if not found:
+            print(f"Failed login attempt with username: {username}, the username or password is incorrect.")
         return None
 
     def updateLastSeen(self, uuid, lastSeen):

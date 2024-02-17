@@ -36,6 +36,46 @@ bool FileHandler::openFileBin(const std::string& fileDestination, std::fstream& 
 	}
 }
 
+int FileHandler::hexCharToValue(char hexChar) {
+	if (hexChar >= '0' && hexChar <= '9') return hexChar - '0';
+	if (hexChar >= 'a' && hexChar <= 'f') return 10 + (hexChar - 'a');
+	if (hexChar >= 'A' && hexChar <= 'F') return 10 + (hexChar - 'A');
+	throw std::invalid_argument("Invalid hex character");
+}
+
+// Function to convert a hexadecimal string to binary data
+void FileHandler::hexStringToBinary(const std::string& hexString, char* outputBuffer) {
+	for (size_t i = 0; i < hexString.length(); i += 2) {
+		int high = hexCharToValue(hexString[i]);
+		int low = hexCharToValue(hexString[i + 1]);
+		outputBuffer[i / 2] = (high << 4) | low;
+	}
+}
+
+char* FileHandler::BinaryToHex(const char* binaryData, size_t length) {
+	std::stringstream hexStream;
+	for (size_t i = 0; i < length; ++i) {
+		unsigned char byte = static_cast<unsigned char>(binaryData[i]);
+		hexStream << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(byte);
+	}
+
+	std::string hexString = hexStream.str();
+	char* hexCStr = new char[hexString.length() + 1]; // +1 for null terminator
+
+	// Using strncpy_s for safe copying
+	// Note: strncpy_s requires the size of the destination buffer as an additional parameter
+	errno_t err = strncpy_s(hexCStr, hexString.length() + 1, hexString.c_str(), hexString.length());
+	if (err != 0) {
+		// Handle error; for simplicity, we'll just print an error message here
+		std::cerr << "Failed to copy hex string to buffer." << std::endl;
+		delete[] hexCStr; // Prevent memory leak
+		return nullptr; // Indicate failure
+	}
+	hexCStr[hexString.length()] = '\0'; // Ensure null termination
+
+	return hexCStr;
+}
+
 /* Opens the file as binary, and returns true upon success, overwrites written content. If the directories don't exist, they will be created. */
 bool FileHandler::openFileOverwrites(const std::string& fileDestination, std::fstream& thisFile)
 {
@@ -102,6 +142,7 @@ void FileHandler::hexifyToFile(std::fstream& thisFile, const char* buffer, unsig
 		thisFile << std::setfill('0') << std::setw(2) << (0xFF & buffer[i]);
 	thisFile.flags(f);
 }
+
 
 /* Returns true if fileDestination exists on the server, otherwise returns false. */
 bool FileHandler::isExistent(const std::string& fileDestination)

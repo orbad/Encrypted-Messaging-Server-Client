@@ -10,7 +10,7 @@ Response.h
 #include <stdint.h>
 
 
-#define SERVER_VER 3
+#define SERVER_VER 24
 #define PACKET_SIZE 1024 // see how to do this better 1 time
 
 class Response {

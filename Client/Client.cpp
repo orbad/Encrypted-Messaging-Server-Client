@@ -3,17 +3,155 @@
 
 #include "Client.h"
 
+std::string Client::hash_password(const std::string& password) {
+	using namespace CryptoPP;
+	SHA256 hash;
+	byte digest[SHA256::DIGESTSIZE]; // Array to store the hash
 
-std::string SHA256HashString(std::string aString) {
-	std::string digest;
-	CryptoPP::SHA256 hash;
+	// Compute the hash
+	hash.CalculateDigest(digest, reinterpret_cast<const byte*>(password.data()), password.size());
 
-	CryptoPP::StringSource foo(aString, true,
-		new CryptoPP::HashFilter(hash,
-			new CryptoPP::Base64Encoder(
-				new CryptoPP::StringSink(digest))));
+	// Manually convert the hash to a hexadecimal string
+	std::stringstream hexStream;
+	for (int i = 0; i < SHA256::DIGESTSIZE; ++i) {
+		hexStream << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(digest[i]);
+	}
 
-	return digest;
+	return hexStream.str();
+}
+
+
+std::string generate_secure_nonce() {
+	using namespace CryptoPP;
+
+	AutoSeededRandomPool rng; // Secure random number generator
+
+	byte nonce[8]; // Array to hold the 8-byte nonce
+	rng.GenerateBlock(nonce, sizeof(nonce)); // Fill the array with random bytes
+
+	// Manually convert the nonce to a hexadecimal string
+	std::stringstream hexStream;
+	hexStream << std::hex << std::setfill('0');
+	for (int i = 0; i < sizeof(nonce); ++i) {
+		hexStream << std::setw(2) << static_cast<int>(nonce[i]);
+	}
+
+	return hexStream.str();
+}
+
+/*std::string msg_server_ip;
+if (fHandler.isExistent(SRV_INFO)) {
+	if (!fHandler.openFile(SRV_INFO, newFile, false))
+		return false;
+	std::getline(newFile, msg_server_ip);
+	std::getline(newFile, msg_server_ip);
+	fHandler.closeFile(newFile);
+}
+else {
+	std::cerr << "Error: Server info file do not exist, can't decalre which server to connect to. " << std::endl;
+	return false;
+}*/
+
+bool Client::getSymmKey(const SOCKET& sock, sockaddr_in* sa, char* uuid, char* user_IV, char* enc_user_nonce, char* enc_AES, Ticket& ticket) const{
+	
+	if (connect(sock, (struct sockaddr*)sa, sizeof(*sa)) == SOCKET_ERROR) {
+		std::cerr << "Connection failed: " << WSAGetLastError() << std::endl;
+		return false;
+	}
+	std::string msg_srv_uuid = MSG_SRV_UUID;
+	std::string nonce = generate_secure_nonce();
+	FileHandler fHandler;
+	char msg_srv_uuid_bin[SERVER_ID_SIZE] = { 0 };
+	char nonce_bin[NONCE_SIZE] = { 0 };
+	fHandler.hexStringToBinary(msg_srv_uuid, msg_srv_uuid_bin);
+	fHandler.hexStringToBinary(nonce, nonce_bin);
+	
+	std::cout << "Sending the following UUID: \n" << msg_srv_uuid.c_str() << ".\n" << std::endl;
+	std::cout << "Sending the following NONCE: \n" << nonce.c_str() << ".\n" << std::endl;
+	std::cout << "From the UUID: \n" << uuid << ".\n" << std::endl;
+/*	try {
+		int connRes = connect(sock, (struct sockaddr*)sa, sizeof(*sa));
+	}
+	catch (std::exception& e) {
+		std::cerr << "Exception: " << e.what() << std::endl;
+		return false;
+	}
+	if (msg_srv_uuid.length() != SERVER_ID_SIZE || nonce.length() != NONCE_SIZE) {
+		std::cerr << "Server UUID or Nonce doesn't meet the length criteria." << std::endl;
+		return false;
+	}*/
+
+
+	Request req;
+	char requestBuffer[PACKET_SIZE] = { 0 };
+
+	req._request.URequestHeader.SRequestHeader.payload_size = SERVER_ID_SIZE + NONCE_SIZE + 1;  // +1 for null terminator
+	req._request.payload = new char[req._request.URequestHeader.SRequestHeader.payload_size];
+	memcpy(req._request.URequestHeader.SRequestHeader.cliend_id, uuid, CLIENT_ID_SIZE);
+	memcpy(req._request.payload, msg_srv_uuid_bin, SERVER_ID_SIZE +1);
+	req._request.payload[SERVER_ID_SIZE] = '\0'; // Insert null terminator after the username
+	memcpy(req._request.payload + SERVER_ID_SIZE +1, nonce_bin, NONCE_SIZE);
+	req._request.URequestHeader.SRequestHeader.code = MSG_ENC_KEY_REQUEST;
+
+	req.packRequest(requestBuffer); // Check content
+	//std::cout << "Sending key request for the following server:" << msg_server_ip.c_str() << "\n" << std::endl; // send the request here
+	send(sock, requestBuffer, PACKET_SIZE, 0);
+	/*int sendResult = send(sock, requestBuffer, PACKET_SIZE, 0);
+	if (sendResult == SOCKET_ERROR) {
+		std::cerr << "Failed to send request: " << WSAGetLastError() << std::endl;
+		// Clean up allocated payload memory
+		delete[] req._request.payload;
+		closesocket(sock);
+		WSACleanup();
+		return false;
+	}*/
+
+	char buffer[PACKET_SIZE] = { 0 };
+	recv(sock, buffer, PACKET_SIZE, 0);
+	Response res;
+	size_t offset = 0;
+	res.unpackResponse(buffer);
+	if (res._response.UResponseHeader.SResponseHeader.code == MSG_KEY_RECEVIED) {
+		memcpy(uuid, res._response.payload + offset, CLIENT_ID_SIZE);
+		offset += CLIENT_ID_SIZE;
+		memcpy(user_IV, res._response.payload + offset, IV_SIZE);
+		offset += IV_SIZE;
+		memcpy(enc_user_nonce, res._response.payload + offset, ENC_NONCE_SIZE);
+		offset += ENC_NONCE_SIZE;
+		memcpy(enc_AES, res._response.payload + offset, ENC_AES_SIZE);
+		offset += ENC_AES_SIZE;
+
+		ticket.parseFromBuffer(res._response.payload, offset);
+
+	}
+	return true;
+}
+
+bool Client::sendMsgAuthKey(const SOCKET&, sockaddr_in*,char* plainPassword, char* uuid, char* enc_key_IV, char* enc_user_nonce, char* enc_AES, Ticket& ticket) const
+{
+	FileHandler fHandler;
+	Client c;
+	AESWrapper wrap;
+
+	std::string hashedpassword = c.hash_password(plainPassword);
+	char password_bin[ENC_PASSWORD] = { 0 };
+	fHandler.hexStringToBinary(hashedpassword, password_bin);
+
+	CryptoPP::SecByteBlock key(reinterpret_cast<const CryptoPP::byte*>(password_bin), ENC_PASSWORD);
+	CryptoPP::SecByteBlock iv(reinterpret_cast<const CryptoPP::byte*>(enc_key_IV), IV_SIZE);
+//	unsigned char* enc_nonce_bin = reinterpret_cast<unsigned char*>(enc_user_nonce);
+//	unsigned char* enc_aes_bin = reinterpret_cast<unsigned char*>(enc_AES);
+
+	char* decrypted_nonce = wrap.decrypt(enc_user_nonce, ENC_NONCE_SIZE, key, iv);
+	char* decrypted_AES = wrap.decrypt(enc_AES, ENC_AES_SIZE, key, iv);
+	std::cout << "The decrypted nonce is: " << fHandler.BinaryToHex(decrypted_nonce, NONCE_SIZE) << std::endl;
+	std::cout << "The decrypted key is: " << fHandler.BinaryToHex(decrypted_AES, AES_KEY_LEN) << std::endl;
+
+
+
+
+
+	return true;
 }
 
 /* Sends the RSA Public Key and inserts the received AES key into AESKey. */
@@ -88,7 +226,7 @@ bool Client::sendPubKey(const SOCKET& sock, sockaddr_in* sa, unsigned char* AESK
 	memcpy(req._request.payload, username.c_str(), username.length() + 1);
 	memcpy(req._request.payload + username.length() + 1, pubkey.c_str(), PUB_KEY_LEN);
 	std::cout << "Sending the following pubkey: \n" << pubkey.c_str() << "." << std::endl;
-	req._request.URequestHeader.SRequestHeader.code = PUB_KEY_SEND;
+	//req._request.URequestHeader.SRequestHeader.code = PUB_KEY_SEND;
 
 	req.packRequest(requestBuffer);
 	send(sock, requestBuffer, PACKET_SIZE, 0);
@@ -102,7 +240,7 @@ bool Client::sendPubKey(const SOCKET& sock, sockaddr_in* sa, unsigned char* AESK
 		std::cout << "Error: Server failed to receive Public Key. " << std::endl;
 		return false;
 	}
-	else if (res._response.UResponseHeader.SResponseHeader.code == PUB_KEY_RECEVIED) {
+	/*else if (res._response.UResponseHeader.SResponseHeader.code == PUB_KEY_RECEVIED) {
 		RSAPrivateWrapper rsapriv_other(rsapriv.getPrivateKey());
 		char encryptedAESKey[ENC_AES_LEN] = { 0 };
 
@@ -111,7 +249,7 @@ bool Client::sendPubKey(const SOCKET& sock, sockaddr_in* sa, unsigned char* AESK
 		memcpy(AESKey, decryptedAESKey.c_str(), AES_KEY_LEN);
 		std::cout << "The AESKey has been recieved and decrypred successfully." << std::endl;
 		return true;
-	}
+	}*/
 }
 
 
@@ -161,8 +299,9 @@ bool Client::getServersInfo(std::string& auth_ip_address, uint16_t& auth_port, s
 }
 
 /* Deals with user registration to the server. */
-bool Client::registerUser(const SOCKET& sock, struct sockaddr_in* sa, char* uuid) const
+bool Client::registerUser(const SOCKET& sock, struct sockaddr_in* sa, char* uuid, char* plainTextPassword) const
 {
+	Client c;
 	FileHandler fHandler;
 	std::fstream newFile;
 	try {
@@ -174,7 +313,6 @@ bool Client::registerUser(const SOCKET& sock, struct sockaddr_in* sa, char* uuid
 	}
 
 	std::string username;
-	std::string password;
 	std::string uuid_from_ME;
 	bool secondLineExists = false; // Flag for checking UUID existence in ME_INFO
 
@@ -190,13 +328,14 @@ bool Client::registerUser(const SOCKET& sock, struct sockaddr_in* sa, char* uuid
 	else if (!secondLineExists){
 		std::cout << "Enter your username: ";
 		//std::getline(newFile, username);
-		std::cin >> username;
+		std::getline(std::cin, username);
 		std::cout << "You entered: " << username << std::endl; //Debugging
 		std::cout << "Enter your password: ";
 		//std::getline(newFile, username);
-		std::cin >> password;
-		std::cout << "You entered: " << password << std::endl; //Debugging
-		std::cout << "Which is encrypted to: " << password << std::endl; //Debugging
+		std::cin.getline(plainTextPassword, PASSWORD_LENGTH);
+		std::cout << "You entered: " << plainTextPassword << std::endl; //Debugging
+		std::string hashed = c.hash_password(plainTextPassword);
+		std::cout << "Which is encrypted to: " << hashed << std::endl; //Debugging
 	}
 	else {
 		std::cerr << "Error: Me.info file does not exist, and name was not for registration." << std::endl;
@@ -209,16 +348,13 @@ bool Client::registerUser(const SOCKET& sock, struct sockaddr_in* sa, char* uuid
 		std::cout << "Username doesn't meet the length criteria. " << std::endl;
 		return false;
 	}
-	if (password.length() >= PASSWORD_LENGTH) {
-		std::cout << "Password doesn't meet the length criteria. " << std::endl;
-		return false;
-	}
 
-	req._request.URequestHeader.SRequestHeader.payload_size = username.length() + password.length() + 1;  // +1 for null terminator
+
+	req._request.URequestHeader.SRequestHeader.payload_size = username.length() + sizeof(plainTextPassword)+ 1;  // +1 for null terminator
 	req._request.payload = new char[req._request.URequestHeader.SRequestHeader.payload_size];
 	memcpy(req._request.payload, username.c_str(), username.length());
 	req._request.payload[username.length()] = '\0'; // Insert null terminator after the username
-	memcpy(req._request.payload + username.length() + 1, password.c_str(), password.length());
+	memcpy(req._request.payload + username.length() + 1, plainTextPassword, sizeof(plainTextPassword));
 	req._request.URequestHeader.SRequestHeader.code = REGISTER_REQUEST;
 
 	req.packRequest(requestBuffer);
@@ -254,6 +390,7 @@ bool Client::registerUser(const SOCKET& sock, struct sockaddr_in* sa, char* uuid
 				fHandler.writeToFile(newFile, username.c_str(), username.length());
 				fHandler.writeToFile(newFile, "\n", strlen("\n"));
 				fHandler.hexifyToFile(newFile, res._response.payload, res._response.UResponseHeader.SResponseHeader.payload_size);
+
 			}
 		}
 		else {
@@ -264,7 +401,6 @@ bool Client::registerUser(const SOCKET& sock, struct sockaddr_in* sa, char* uuid
 		}
 		std::cout << "Updated ME INFO file with name and UUID." << std::endl;
 		memcpy(uuid, res._response.payload, CLIENT_ID_SIZE);
-
 		closesocket(sock);
 		return true;
 	}
@@ -319,10 +455,11 @@ bool Client::decryptAESKey(const char* uuid, const char* encryptedAESKey, unsign
 
 
 
-bool Client::loadClientInfo(char* username) const {
+bool Client::loadClientInfo(char* uuid) const {
 	FileHandler fHandler;
 	std::fstream newFile;
 	std::string usernameStr;
+	std::string clientUUID;
 
 
 	// Check if 'me.info' exists and open it
@@ -333,104 +470,28 @@ bool Client::loadClientInfo(char* username) const {
 			return false;
 
 		std::getline(newFile, usernameStr);
-		memcpy(username, usernameStr.c_str(), USER_LENGTH);
-		fHandler.closeFile(newFile);
-	}
-	else if (fHandler.isExistent(TRANSFER_INFO)) {
-		if (!fHandler.openFile(TRANSFER_INFO, newFile, false))
-			return false;
-		std::getline(newFile, usernameStr);
-		std::getline(newFile, usernameStr);
-		memcpy(username, usernameStr.c_str(), USER_LENGTH);
+		memcpy(uuid, usernameStr.c_str(), usernameStr.length());
+		std::cout << "Client - login, username: " << usernameStr << std::endl;
+		std::getline(newFile, clientUUID);
+		// here the function should be inserted, uuid in the line beneath should be 16 bytes
+		fHandler.hexStringToBinary(clientUUID, uuid);
+		std::cout << "Client - login, username: " << clientUUID << std::endl;
 		fHandler.closeFile(newFile);
 	}
 
 	else {
-		std::cerr << "Error: Transfer.info and Me.info files do not exist. " << std::endl;
+		std::cerr << "Error: Me.info files do not exist. " << std::endl;
 		return false;  // Return false if 'me.info' does not exist
 	}
 
 	return true;  // Return true if username was successfully loaded
 }
 
-bool Client::loginUser(const SOCKET& sock, struct sockaddr_in* sa, char* username, char* uuid, char* AESKey) const {
-	if (!loadClientInfo(username)) {
+bool Client::loginUser(char* uuid) const {
+	if (!loadClientInfo(uuid)) {
 		std::cerr << "Error: Failed to load client info." << std::endl;
 	}
-
-	try {
-		int connRes = connect(sock, (struct sockaddr*)sa, sizeof(*sa));
-	}
-	catch (std::exception& e) {
-		std::cerr << "Exception: " << e.what() << std::endl;
-		return false;
-	}
-
-	Request req;
-	char requestBuffer[PACKET_SIZE] = { 0 };
-
-	// Set the request header fields for a login request
-	req._request.URequestHeader.SRequestHeader.payload_size = strlen(username)+1;  // +1 for the null terminator
-	req._request.payload = new char[strlen(username)+1];  // +1 for the null terminator
-	memcpy(req._request.payload, username, strlen(username)+1);  // +1 to include the null terminator
-	req._request.URequestHeader.SRequestHeader.code = LOGIN_REQUEST;
-
-	// Pack the request and send it
-	req.packRequest(requestBuffer);
-	send(sock, requestBuffer, PACKET_SIZE, 0);
-
-	// Receive the server response
-	char buffer[PACKET_SIZE] = { 0 };
-	recv(sock, buffer, PACKET_SIZE, 0);
-
-	Response res;
-	res.unpackResponse(buffer);
-
-	// Check for a successful login response code
- 	if (res._response.UResponseHeader.SResponseHeader.code == LOGIN_SUCCESS) {
-		std::cout << "Successfully logged in - " << username << std::endl;
-		// Copy the encrypted AES key and the UUID from the response payload
-		memcpy(uuid, res._response.payload, CLIENT_ID_SIZE);
-		memcpy(AESKey, res._response.payload + CLIENT_ID_SIZE, ENC_AES_LEN);
 		return false; // Return false, since the logged-in user is not new
 	}
-
-	else if (res._response.UResponseHeader.SResponseHeader.code == LOGIN_ERROR) {
-		std::cout << "Failed to login, this user needs to be registered!" << std::endl;
-		closesocket(sock);
-
-		// Create a new socket
-		SOCKET new_sock = socket(AF_INET, SOCK_STREAM, 0);
-		if (new_sock == INVALID_SOCKET) {
-			std::cerr << "Error: Unable to create socket." << std::endl;
-			return false;
-		}
-
-		// Re-establish the connection
-		int connRes = connect(new_sock, (struct sockaddr*)sa, sizeof(*sa));
-		if (connRes == SOCKET_ERROR) {
-			std::cerr << "Error: Unable to connect to server." << std::endl;
-			closesocket(new_sock);  // Don't forget to close the new socket
-			return false;
-		}
-
-		if (registerUser(new_sock, sa, uuid)) {
-			std::cout << "The following user has registered successfully - "<< username << std::endl;
-			return true;  // Return true as the user is now registered as a new user
-		}
-		else {
-			std::cout << "Error: Failed to register user." << std::endl;
-			return false;
-		}
-		return false;
-	}
-
-	else if (res._response.UResponseHeader.SResponseHeader.code == GENERAL_ERROR) {
-		std::cout << "Error: Server failed to login or register the user. " << std::endl;
-		return false;
-	}
-
-	
-}
 
 

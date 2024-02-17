@@ -11,7 +11,7 @@ Request.h
 
 
 #define CLIENT_SIZE 16
-#define SERVER_VER 3
+#define SERVER_VER 24
 #define PACKET_SIZE 1024
 
 class Request {

@@ -6,13 +6,14 @@ from protocol import Request, Response
 from constants import *
 from utils import *
 from database import Database
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 from encryptor import Encryptor
 from _thread import *
 import threading
-import hashlib
-
+import hashlib, base64
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
 
 print_lock = threading.Lock()
 
@@ -27,6 +28,8 @@ class Server:
         self.loggedUser = False
         self.database = Database(DB_NAME)
         self.AESKey = ''
+        self.clientUUID = ''
+        self.userPassword = ''
 
     def read(self, conn):
         data = conn.recv(PACKET_SIZE)
@@ -63,11 +66,12 @@ class Server:
         currRequest.littleEndianUnpack(data)
 
         requestedService = currRequest.code
-
         if requestedService == RequestCode.CLIENT_REGISTER_REQUEST.value:
             self.registerUser(conn, currRequest)
-        elif requestedService == RequestCode.LOGIN_REQUEST.value:  # Handle login requests
-            self.loginUser(conn, currRequest)
+
+        elif requestedService == RequestCode.MSG_ENC_KEY_REQUEST.value:  # Handle login requests
+            self.sendEncMsgKey(conn, currRequest)
+
         # elif requestedService == RequestCode.PUB_KEY_SEND.value or RequestCode.FILE_SEND.value:
         #     self.fileUpload(conn, currRequest)
         else:
@@ -75,6 +79,7 @@ class Server:
 
     def hash_password(self, password):
         # Hash a password using SHA-256
+        self.userPassword = password
         sha_signature = hashlib.sha256(password.encode()).digest()
         return sha_signature
 
@@ -100,11 +105,11 @@ class Server:
                 print(f'Error registering {user}, the user already exists')
 
             else:
-                id = bytes.fromhex(uuid.uuid4().hex)
+                self.clientUUID = bytes.fromhex(uuid.uuid4().hex)
                 hashed_password = self.hash_password(password)
-                self.database.registerClient(id.hex(), user, hashed_password.hex(), str(datetime.now()))
-                currResponse.payload = id
-                print(f'Successfully registered {user} with UUID of {id.hex()}.')
+                self.database.registerClient(self.clientUUID.hex(), user, hashed_password.hex(), str(datetime.now()))
+                currResponse.payload = self.clientUUID
+                print(f'Successfully registered {user} with UUID of {self.clientUUID.hex()}.')
                 data = currResponse.littleEndianPack()
         except Exception as e:
             currResponse.code = ResponseCode.GENERAL_ERROR.value
@@ -141,7 +146,6 @@ class Server:
             sendPacket(conn, data)
             print(f'Error: Failed to send Pubkey - {e}.')
 
-
     def loginUser(self, conn, currRequest):
         """ Logs in a user. If name doesn't exist and RSA not found, returns error.
             Otherwise, returns the UUID and AES key of the user. """
@@ -157,18 +161,20 @@ class Server:
                 print(f"Failed login attempt with username: {username}")
             else:
                 # User found in the database
-                if 'PublicKey' in user_info:
+                if 'PasswordHash' in user_info:
                     user_uuid = user_info['UUID']
+                    user_hashedpass = user_info['PasswordHash']
                     aes_key = user_info['AESKey']
                     self.AESKey = aes_key
-                    encAESKey = enc.encryptPubKey(aes_key, user_info['PublicKey'])
+                    encAESKey = enc.encryptPubKey(aes_key, user_hashedpass)
                     currResponse = Response(ResponseCode.LOGIN_SUCCESS.value,
                                             UUID_BYTES + MAX_AES_LEN)  # Payload size is the size of a UUID plus the size of an AES key
                     currResponse.payload = user_uuid + encAESKey  # Set the payload to the user's UUID concatenated with the AES key
                     self.loggedUser = True
                     print(f"Successfully logged in user {username} with UUID: {user_uuid.hex()}")
                 else:
-                    currResponse = Response(ResponseCode.LOGIN_ERROR.value, user_info['UUID'] if user_info['UUID'] else 0)  # Return UUID payload for login error, no payload if doesn't exist in DB
+                    currResponse = Response(ResponseCode.LOGIN_ERROR.value, user_info['UUID'] if user_info[
+                        'UUID'] else 0)  # Return UUID payload for login error, no payload if doesn't exist in DB
                     print(f"Failed login attempt with username: {username}")
         except Exception as e:
             currResponse = Response(ResponseCode.GENERAL_ERROR.value, 0)  # No UUID if user didn't appear in DB
@@ -177,6 +183,65 @@ class Server:
         data = currResponse.littleEndianPack()
         sendPacket(conn, data)  # Send response back to the client
 
+    def sendEncMsgKey(self, conn, currRequest):
+        enc = Encryptor()
+        offset = currRequest.payloadSize
+
+        # buffer = conn.recv(PACKET_SIZE)
+        # request_h = currRequest.littleEndianUnpack(buffer)
+        # currResponse = Response(ResponseCode.MSG_ENC_KEY_RECEVIED.value, 16 + 16 + 8 + 32 + 1 + 16 + 16 + 8 + 16 + 32 + 8)
+        try:
+            parts = currRequest.payload.split(b'\x00', 2)  # Split by null bytes to extract UUID and nonce
+            server_uuid = parts[0]
+            nonce = parts[1]
+            # Generate AES Key and IV
+            server_aes_key_b64 = self.database.loadMessageServerKey()
+            server_aes_key = base64.b64decode(server_aes_key_b64)
+            aes_key = enc.key
+            client_uuid_str = currRequest.uuid.hex()
+            client_uuid_bin = currRequest.uuid
+            user_hashed_password = bytes.fromhex(self.database.getUserPassword(client_uuid_str)) # Need to load from DB already hashed
+            enc_key_iv = enc.generateIV()  # Generate a new IV for user encryption
+            ticket_iv = enc.generateIV()  # Generate a new IV for ticket encryption
+            # Encrypt the nonce and AES key with the user's hashed password
+            encrypted_nonce = enc.encryptAES(nonce, user_hashed_password, enc_key_iv)
+            encrypted_aes_key = enc.encryptAES(aes_key, user_hashed_password, enc_key_iv)
+            ticket_version = int.to_bytes(SERVER_VER)
+            encrypted_ticket_aes_key = enc.encryptAES(aes_key, server_aes_key, ticket_iv)
+            creation_time = int(datetime.now().timestamp())
+            expiration_time = int((datetime.now() + timedelta(hours=1)).timestamp())
+            encrypted_expiration_time = enc.encryptAES(expiration_time.to_bytes(8, 'little'), enc.key, ticket_iv)
+
+            # encrypted_key = b''.join([
+            #     enc_key_iv,
+            #     encrypted_nonce,
+            #     encrypted_aes_key
+            # ])
+            # ticket_payload = b''.join([
+            #     ticket_version,
+            #     client_uuid_bin,
+            #     server_uuid,
+            #     creation_time.to_bytes(8, 'little'),
+            #     ticket_iv,
+            #     encrypted_ticket_aes_key,
+            #     encrypted_expiration_time
+            # ])
+            # response_payload = b''.join([
+            #     client_uuid_bin,
+            #     encrypted_key,
+            #     ticket_payload
+            # ])
+            currResponse = Response(ResponseCode.MSG_ENC_KEY_RECEIVED.value, 217)
+            currResponse.payload = client_uuid_bin + enc_key_iv + encrypted_nonce + encrypted_aes_key + ticket_version + client_uuid_bin + server_uuid + creation_time.to_bytes(8, 'little') + ticket_iv + encrypted_ticket_aes_key + encrypted_expiration_time
+            # currResponse.payload = response_payload
+            data = currResponse.littleEndianPack()
+            sendPacket(conn, data)
+
+        except Exception as e:
+            currResponse = Response(ResponseCode.GENERAL_ERROR.value, 0)  # No UUID if user didn't appear in DB
+            data = currResponse.littleEndianPack()
+            sendPacket(conn, data)
+            print(f'Error: Failed to send Encrypted Key - {e}.')
     # def fileUpload(self, conn, currRequest):
     #     """ Handles upload of file, including encryption. """
     #     if currRequest.code == RequestCode.PUB_KEY_SEND.value:

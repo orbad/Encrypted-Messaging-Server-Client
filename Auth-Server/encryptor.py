@@ -6,7 +6,8 @@ from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP, AES
 from Crypto.Util.Padding import pad, unpad
 
-AES_KEY_SIZE = 16
+AES_KEY_SIZE = 32
+IV_SIZE = 16
 
 
 class Encryptor:
@@ -20,8 +21,15 @@ class Encryptor:
         rsa_pubkey = PKCS1_OAEP.new(rsa_pubkey)
         return rsa_pubkey.encrypt(text)
 
-    def decryptAES(self, text: bytes, aeskey: bytes):
-        """ Decrypts the text using a given AES key, assuming IV is 0 """
-        cipher = AES.new(aeskey, AES.MODE_CBC, self.iv)
+    def generateIV(self):
+        return os.urandom(IV_SIZE)
+
+    def decryptAES(self, text: bytes, aeskey: bytes, iv: bytes):
+        """ Decrypts the text using a given AES key and IV """
+        cipher = AES.new(aeskey, AES.MODE_CBC, iv)
         raw = cipher.decrypt(text)
         return unpad(raw, AES.block_size)
+    def encryptAES(self, text: bytes, aeskey: bytes, iv: bytes) -> bytes:
+        """ Encrypts the text using a given AES key and IV """
+        cipher = AES.new(aeskey, AES.MODE_CBC, iv)
+        return cipher.encrypt(pad(text, AES.block_size))
