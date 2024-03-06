@@ -1,7 +1,9 @@
 """ Name: Or Badani
     ID: 316307586 """
-
+import base64
 import socket
+import time
+
 from protocol import Request, Response
 from constants import *
 from utils import *
@@ -20,12 +22,14 @@ print_lock = threading.Lock()
 class Server:
     MAX_TRIES = 3
 
-    def __init__(self, host, port) -> None:
-        self.host = host
-        self.port = port
+    def __init__(self) -> None:
+        self.address = ''
+        self.host = ''
+        self.port = ''
         self.loggedUser = False
-        self.database = Database(DB_NAME)
-        self.AESKey = ''
+        self.srvUUID = ''
+        self.ticket_AESKey = ''
+        self.user_AESKey = ''
 
     def read(self, conn):
         data = conn.recv(PACKET_SIZE)
@@ -42,7 +46,7 @@ class Server:
         """
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.bind((self.host, self.port))
+            sock.bind((self.address, self.port))
             sock.listen(5)
             print(
                 f'Server is running on port {self.port}, listening for connections..')
@@ -60,17 +64,118 @@ class Server:
         """ This function handles the request from the client. """
         currRequest = Request()
         currRequest.littleEndianUnpack(data)
-
         requestedService = currRequest.code
 
-        if requestedService == RequestCode.REGISTER_REQUEST.value:
-            self.registerUser(conn, currRequest)
-        elif requestedService == RequestCode.LOGIN_REQUEST.value:  # Handle login requests
-            self.loginUser(conn, currRequest)
-        elif requestedService == RequestCode.PUB_KEY_SEND.value or RequestCode.FILE_SEND.value:
-            self.fileUpload(conn, currRequest)
+        if requestedService == RequestCode.SYMM_KEY_SEND_AUTH_SERVER.value:
+            self.clientSymmKey(conn, currRequest)
+        elif requestedService == RequestCode.MESSAGE_REQUEST.value:  # Handle login requests
+            self.gotMessage(conn, currRequest)
         else:
             return
+
+    def loadMessageServerKey(self):
+        try:
+            with open(MSG_INFO, 'r') as file:
+                content = file.readlines()
+                return content[3]
+        except Exception as e:
+            print(f"Failed to save client data: {e}")
+    
+    def gotMessage(self, conn, currRequest):
+        encryptor = Encryptor()
+        authenticator = None
+        ticket = None
+        try:
+            payloadSize = currRequest.payloadSize
+            code = currRequest.code
+            version = currRequest.version
+            connected_user_UUID = currRequest.uuid.hex()
+
+            # Extract the payload
+            payload = currRequest.payload
+            offset = 0
+            currResponse = Response(
+                ResponseCode.MESSAGE_ACK.value, UUID_BYTES)
+            try:
+                message_size_bytes = payload[offset:offset+MESSAGE_SIZE]
+                offset += MESSAGE_SIZE
+                messageIV = payload[offset:offset+IV_SIZE]
+                offset += IV_SIZE
+                enc_message = payload[offset:]
+            except Exception as e:
+                print(f'Error decoding payload: {e}')
+                # Handle decoding error (e.g., send an error response back to the client)
+                return
+            auth_creation_time_dec = int.from_bytes(message_size_bytes, 'little')
+            message_decrypted = encryptor.decryptAES(enc_message, self.user_AESKey, messageIV).decode("utf-8")
+            print(f"The user has sent:\n{message_decrypted}\n")
+            currResponse.payloadSize = 0
+            data = currResponse.littleEndianPack()
+        except Exception as e:
+            currResponse.code = ResponseCode.GENERAL_ERROR.value
+            currResponse.payloadSize = 0
+            data = currResponse.littleEndianPack()
+            print(f'Error: Failed to get message from {connected_user_UUID}.')
+        sendPacket(conn, data)
+    
+    def clientSymmKey(self, conn, currRequest):
+        encryptor = Encryptor()
+        try:
+            payloadSize = currRequest.payloadSize
+            code = currRequest.code
+            version = currRequest.version
+            connected_user_UUID = currRequest.uuid.hex()
+
+            # Extract the payload
+            payload = currRequest.payload
+            currResponse = Response(
+                ResponseCode.SYMM_KEY_RECEVIED.value, UUID_BYTES)
+            try:
+                authenticator_encrypted = payload[:AUTHENTICATOR_SIZE]  # Decode the authenticator part
+                ticket_encrypted = payload[AUTHENTICATOR_SIZE:]  # Decode the ticket
+            except Exception as e:
+                print(f'Error decoding payload: {e}')
+                # Handle decoding error (e.g., send an error response back to the client)
+                return
+
+            #if authenticator and ticket:
+            self.ticket_AESKey = base64.b64decode(self.loadMessageServerKey())
+            time.sleep(1)
+            authenticator_parsed = parse_authenticator(authenticator_encrypted)
+            enc_key_iv, server_version, enc_client_UUID, enc_server_UUID, enc_creation_time = authenticator_parsed
+            ticket_parsed = parse_ticket(ticket_encrypted)
+            ticket_version, client_UUID, server_UUID, creation_time, ticket_iv, enc_server_AES, enc_expiration_time = ticket_parsed
+            print(f"This is the ticket's AESKey:\n{self.ticket_AESKey}\nAnd this is the ticket_iv:{base64.b64encode(ticket_iv)}")
+            self.user_AESKey = encryptor.decryptAES(enc_server_AES, self.ticket_AESKey, ticket_iv)
+            auth_ver_decrypted = encryptor.decryptAES(server_version, self.user_AESKey, enc_key_iv)
+            auth_client_UUID_dec = encryptor.decryptAES(enc_client_UUID, self.user_AESKey, enc_key_iv)
+            auth_server_UUID_dec = encryptor.decryptAES(enc_server_UUID, self.user_AESKey, enc_key_iv)
+            auth_creation_time_dec_bytes = encryptor.decryptAES(enc_creation_time, self.user_AESKey, enc_key_iv)
+            auth_creation_time_dec = int.from_bytes(auth_creation_time_dec_bytes, 'little')
+            ticket_version_dec = ticket_version
+            ticket_client_UUID = client_UUID
+            ticket_server_UUID = server_UUID
+            ticket_creation_time = creation_time
+            #client_msg_AES_decrypted = encryptor.decryptAES(enc_server_AES, self.AESKey, ticket_iv)
+            ticket_expiration_time_decrypted = encryptor.decryptAES(enc_expiration_time, self.ticket_AESKey, ticket_iv)
+            verified_user = verify_and_respond(auth_client_UUID_dec, auth_server_UUID_dec, auth_creation_time_dec, ticket_client_UUID, ticket_server_UUID, ticket_creation_time, int.from_bytes(ticket_expiration_time_decrypted))
+
+            if verified_user:
+                currResponse.payloadSize = 0
+                data = currResponse.littleEndianPack()
+                print("AES KEY WAS Received successfully!")
+            else:
+                currResponse.code = ResponseCode.GENERAL_ERROR.value
+                currResponse.payloadSize = 0
+                data = currResponse.littleEndianPack()
+                print(f'Error: Failed to get Authenticator Ticket from {connected_user_UUID}.')
+        except Exception as e:
+            currResponse.code = ResponseCode.GENERAL_ERROR.value
+            currResponse.payloadSize = 0
+            data = currResponse.littleEndianPack()
+            print(f'Error: Failed to get Authenticator Ticket from {connected_user_UUID}.')
+        sendPacket(conn, data)
+
 
     def registerUser(self, conn, currRequest):
         """ Registers user. If name exists, returns error.
@@ -234,8 +339,6 @@ class Server:
             f.close()
             self.database.registerFile(
                 currRequest.uuid, dec_filename, pathname, 1)
-            # print(self.database.executeCommand("SELECT * FROM clients"))
-            # print(self.database.executeCommand("SELECT * FROM files"))
             print(f'Successfully backed up file {dec_filename}.')
             sendPacket(conn, buffer)
         except Exception as e:

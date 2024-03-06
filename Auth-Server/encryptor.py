@@ -28,7 +28,11 @@ class Encryptor:
         """ Decrypts the text using a given AES key and IV """
         cipher = AES.new(aeskey, AES.MODE_CBC, iv)
         raw = cipher.decrypt(text)
-        return unpad(raw, AES.block_size)
+        try:
+            return unpad(raw, AES.block_size)
+        except ValueError:
+            print("User's password is incorrect, exiting..")
+            exit(1)
     def encryptAES(self, text: bytes, aeskey: bytes, iv: bytes) -> bytes:
         """ Encrypts the text using a given AES key and IV """
         cipher = AES.new(aeskey, AES.MODE_CBC, iv)

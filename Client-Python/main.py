@@ -1,4 +1,6 @@
 import sys
+import time
+
 from client import Client
 from utils import getPorts
 from constants import *
@@ -9,29 +11,41 @@ def main():
     client = Client()
 
     # Set server address and ports
-    client.server_address, _ = '127.0.0.1', '127.0.0.1'  # Assuming both addresses are the same in this context
-    client.auth_port, client.msg_port = getPorts(SRV_INFO)
+    # client.server_address, _ = '127.0.0.1', '127.0.0.1'  # Assuming both addresses are the same in this context
+    client.auth_server_address, client.auth_port, client.msg_server_address, client.msg_port = getPorts(SRV_INFO)
 
     # Attempt to load client info from ME_INFO; if not existent, prompt for registration
     if client.load_client_info():
         print("User information loaded successfully.")
+        client.password = input("Enter your password: ")
+        client.hashed_password = client.hash_password(client.password)
+        time.sleep(1)
+
     else:
         print("No existing user information found. Proceeding to registration.")
         # Prompt for server details; this could be replaced with a configuration file or constants
-        client.server_address = input("Enter the server address (default: localhost): ") or 'localhost'
-        client.auth_port = int(input(f"Enter the auth port (default: {DEFAULT_PORT}): ") or DEFAULT_PORT)
 
-        if not client.register_user(client.server_address, client.auth_port):
+        if not client.register_user(client.auth_server_address, client.auth_port):
             print("Failed to register user.")
             sys.exit(1)
         else:
             print("User registered successfully.")
 
-    # Assuming additional functionality follows registration/login
-    # This could include establishing a message session, fetching data from the server, etc.
-
-    # Close the client connection
-    client.close()
+    gotAesKey = client.get_symm_key(client.auth_server_address, client.auth_port, client.uuid, MSG_SRV_UUID)
+    if gotAesKey:
+        client.send_msg_encryption_key(client.msg_server_address, client.msg_port, client.uuid, MSG_SRV_UUID)
+        while True:
+            try:
+                message_payload = input("Please write a message which will be sent to the Message Server:\n")
+                client.send_msg(client.msg_server_address, client.msg_port, client.uuid,
+                                message_payload)  # Add do-while loop for messages after the 1st one, maybe do it
+                # with EOF character
+            except EOFError:
+                print(f"Escape character has been pressed, stopped sending messages for the user: {client.username}")
+                break
+    else:
+        print(f"There was an issue with symmetrical key fetching from the Authentication server.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

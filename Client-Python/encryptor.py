@@ -8,6 +8,7 @@ from Crypto.Util.Padding import pad, unpad
 
 AES_KEY_SIZE = 32
 IV_SIZE = 16
+NONCE_SIZE = 8
 
 
 class Encryptor:
@@ -21,14 +22,25 @@ class Encryptor:
         rsa_pubkey = PKCS1_OAEP.new(rsa_pubkey)
         return rsa_pubkey.encrypt(text)
 
+    def generateNonce(self):
+        return os.urandom(NONCE_SIZE)
+
     def generateIV(self):
         return os.urandom(IV_SIZE)
+
+    def hex_string_to_binary(self, hex_str):
+        """Convert a hexadecimal string to its binary representation."""
+        return bytes.fromhex(hex_str)
 
     def decryptAES(self, text: bytes, aeskey: bytes, iv: bytes):
         """ Decrypts the text using a given AES key and IV """
         cipher = AES.new(aeskey, AES.MODE_CBC, iv)
         raw = cipher.decrypt(text)
-        return unpad(raw, AES.block_size)
+        try:
+            return unpad(raw, AES.block_size)
+        except ValueError:
+            print("Decryption failed: Padding is incorrect. Check the key and IV.\nExisting..")
+            exit(1)
 
     def encryptAES(self, text: bytes, aeskey: bytes, iv: bytes) -> bytes:
         """ Encrypts the text using a given AES key and IV """

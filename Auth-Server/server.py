@@ -2,6 +2,8 @@
     ID: 316307586 """
 
 import socket
+import struct
+
 from protocol import Request, Response
 from constants import *
 from utils import *
@@ -185,32 +187,82 @@ class Server:
 
     def sendEncMsgKey(self, conn, currRequest):
         enc = Encryptor()
-        offset = currRequest.payloadSize
-
-        # buffer = conn.recv(PACKET_SIZE)
-        # request_h = currRequest.littleEndianUnpack(buffer)
-        # currResponse = Response(ResponseCode.MSG_ENC_KEY_RECEVIED.value, 16 + 16 + 8 + 32 + 1 + 16 + 16 + 8 + 16 + 32 + 8)
         try:
-            parts = currRequest.payload.split(b'\x00', 2)  # Split by null bytes to extract UUID and nonce
-            server_uuid = parts[0]
-            nonce = parts[1]
-            # Generate AES Key and IV
-            server_aes_key_b64 = self.database.loadMessageServerKey()
-            server_aes_key = base64.b64decode(server_aes_key_b64)
-            aes_key = enc.key
-            client_uuid_str = currRequest.uuid.hex()
+            req_payload = currRequest.payload
+            server_uuid = req_payload[:UUID_BYTES]
+            nonce = req_payload[UUID_BYTES:]
+
+            # Load necessary data
             client_uuid_bin = currRequest.uuid
-            user_hashed_password = bytes.fromhex(self.database.getUserPassword(client_uuid_str)) # Need to load from DB already hashed
-            enc_key_iv = enc.generateIV()  # Generate a new IV for user encryption
-            ticket_iv = enc.generateIV()  # Generate a new IV for ticket encryption
-            # Encrypt the nonce and AES key with the user's hashed password
+            client_uuid_str = client_uuid_bin.hex()
+            user_hashed_password = bytes.fromhex(
+                self.database.getUserPassword(client_uuid_str))  # Assuming it's already hashed
+
+            # Generate IVs for encryption
+            enc_key_iv = enc.generateIV()
+            ticket_iv = enc.generateIV()
+
+            # Encrypt nonce and AES key with user's hashed password
             encrypted_nonce = enc.encryptAES(nonce, user_hashed_password, enc_key_iv)
-            encrypted_aes_key = enc.encryptAES(aes_key, user_hashed_password, enc_key_iv)
-            ticket_version = int.to_bytes(SERVER_VER)
-            encrypted_ticket_aes_key = enc.encryptAES(aes_key, server_aes_key, ticket_iv)
+            server_aes_key = base64.b64decode(self.database.loadMessageServerKey())
+            mutual_key = enc.key
+            encrypted_aes_key_user = enc.encryptAES(mutual_key, user_hashed_password,
+                                                    enc_key_iv)  # AES key encrypted with user's password
+
+            # Prepare ticket components
+            encrypted_aes_key_server = enc.encryptAES(mutual_key, server_aes_key,
+                                                      ticket_iv)  # AES key encrypted with server's key
             creation_time = int(datetime.now().timestamp())
             expiration_time = int((datetime.now() + timedelta(hours=1)).timestamp())
-            encrypted_expiration_time = enc.encryptAES(expiration_time.to_bytes(8, 'little'), enc.key, ticket_iv)
+            encrypted_expiration_time = enc.encryptAES(expiration_time.to_bytes(8, 'little'), server_aes_key,
+                                                       ticket_iv)
+
+            # Assemble response payload
+            payload = (client_uuid_bin + enc_key_iv + encrypted_nonce + encrypted_aes_key_user +
+                       int.to_bytes(SERVER_VER) + client_uuid_bin + server_uuid +
+                       struct.pack('<Q', creation_time) + ticket_iv + encrypted_aes_key_server +
+                       encrypted_expiration_time)
+
+            currResponse = Response(ResponseCode.MSG_ENC_KEY_RECEIVED.value, len(payload))
+            currResponse.payload = payload
+            data = currResponse.littleEndianPack()
+            sendPacket(conn, data)
+
+        except Exception as e:
+            print(f'Error in sendEncMsgKey: {e}')
+            # Send error response
+            currResponse = Response(ResponseCode.GENERAL_ERROR.value, 0)
+            data = currResponse.littleEndianPack()
+            sendPacket(conn, data)
+
+    # def sendEncMsgKey(self, conn, currRequest):
+    #     enc = Encryptor()
+    #     offset = currRequest.payloadSize
+    #
+    #     # buffer = conn.recv(PACKET_SIZE)
+    #     # request_h = currRequest.littleEndianUnpack(buffer)
+    #     # currResponse = Response(ResponseCode.MSG_ENC_KEY_RECEVIED.value, 16 + 16 + 8 + 32 + 1 + 16 + 16 + 8 + 16 + 32 + 8)
+    #     try:
+    #         parts = currRequest.payload.split(b'\x00', 2)  # Split by null bytes to extract UUID and nonce
+    #         server_uuid = parts[0]
+    #         nonce = parts[1]
+    #         # Generate AES Key and IV
+    #         server_aes_key_b64 = self.database.loadMessageServerKey()
+    #         server_aes_key = base64.b64decode(server_aes_key_b64)
+    #         aes_key = enc.key
+    #         client_uuid_str = currRequest.uuid.hex()
+    #         client_uuid_bin = currRequest.uuid
+    #         user_hashed_password = bytes.fromhex(self.database.getUserPassword(client_uuid_str)) # Need to load from DB already hashed
+    #         enc_key_iv = enc.generateIV()  # Generate a new IV for user encryption
+    #         ticket_iv = enc.generateIV()  # Generate a new IV for ticket encryption
+    #         # Encrypt the nonce and AES key with the user's hashed password
+    #         encrypted_nonce = enc.encryptAES(nonce, user_hashed_password, enc_key_iv)
+    #         encrypted_aes_key = enc.encryptAES(aes_key, user_hashed_password, enc_key_iv)
+    #         ticket_version = int.to_bytes(SERVER_VER)
+    #         encrypted_ticket_aes_key = enc.encryptAES(aes_key, server_aes_key, ticket_iv)
+    #         creation_time = int(datetime.now().timestamp())
+    #         expiration_time = int((datetime.now() + timedelta(hours=1)).timestamp())
+    #         encrypted_expiration_time = enc.encryptAES(expiration_time.to_bytes(8, 'little'), enc.key, ticket_iv)
 
             # encrypted_key = b''.join([
             #     enc_key_iv,
@@ -231,17 +283,21 @@ class Server:
             #     encrypted_key,
             #     ticket_payload
             # ])
-            currResponse = Response(ResponseCode.MSG_ENC_KEY_RECEIVED.value, 217)
-            currResponse.payload = client_uuid_bin + enc_key_iv + encrypted_nonce + encrypted_aes_key + ticket_version + client_uuid_bin + server_uuid + creation_time.to_bytes(8, 'little') + ticket_iv + encrypted_ticket_aes_key + encrypted_expiration_time
-            # currResponse.payload = response_payload
-            data = currResponse.littleEndianPack()
-            sendPacket(conn, data)
+        #     currResponse = Response(ResponseCode.MSG_ENC_KEY_RECEIVED.value, 217)
+        #     currResponse.payload = client_uuid_bin + enc_key_iv + encrypted_nonce + encrypted_aes_key + ticket_version + client_uuid_bin + server_uuid + creation_time.to_bytes(8, 'little') + ticket_iv + encrypted_ticket_aes_key + encrypted_expiration_time
+        #     # currResponse.payload = response_payload
+        #     data = currResponse.littleEndianPack()
+        #     sendPacket(conn, data)
+        #
+        # except Exception as e:
+        #     currResponse = Response(ResponseCode.GENERAL_ERROR.value, 0)  # No UUID if user didn't appear in DB
+        #     data = currResponse.littleEndianPack()
+        #     sendPacket(conn, data)
+        #     print(f'Error: Failed to send Encrypted Key - {e}.')
 
-        except Exception as e:
-            currResponse = Response(ResponseCode.GENERAL_ERROR.value, 0)  # No UUID if user didn't appear in DB
-            data = currResponse.littleEndianPack()
-            sendPacket(conn, data)
-            print(f'Error: Failed to send Encrypted Key - {e}.')
+
+
+
     # def fileUpload(self, conn, currRequest):
     #     """ Handles upload of file, including encryption. """
     #     if currRequest.code == RequestCode.PUB_KEY_SEND.value:

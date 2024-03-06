@@ -6,6 +6,8 @@ import utils
 
 # Main function - runs the server.
 if __name__ == '__main__':
-    port = utils.getPort('port.info')
-    myServer = server.Server('', port)
-    myServer.run()
+    msgServer = server.Server()
+    msgServer.address, msgServer.port, msgServer.host, msgServer.srvUUID, msgServer.AESKey = utils.getPort('msg.info')
+    # port = utils.getPort('msg.info')
+    # myServer = server.Server('', port)
+    msgServer.run()
