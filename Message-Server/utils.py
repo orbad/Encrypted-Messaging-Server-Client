@@ -4,7 +4,6 @@ from datetime import datetime
 import struct
 
 from constants import *
-import os
 
 def getPort(filename):
     """
@@ -115,9 +114,3 @@ def sendPacket(socket, buffer):
         buffer += bytearray(PACKET_SIZE - len(buffer))  # Pad with \0
 
     socket.send(buffer)
-
-
-def createDirectory(directory):
-    """ If directory doesn't exist, it is created. """
-    if not os.path.exists(directory):
-        os.mkdir(directory)

@@ -2,7 +2,6 @@
     ID: 316307586 """
 
 import os
-from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP, AES
 from Crypto.Util.Padding import pad, unpad
 
@@ -14,12 +13,6 @@ class Encryptor:
     def __init__(self) -> None:
         self.iv = b'\x00' * AES.block_size
         self.key = os.urandom(AES_KEY_SIZE)
-
-    def encryptPubKey(self, text: bytes, pubkey: bytes) -> bytes:
-        """ Encrypts the text using a given public RSA key """
-        rsa_pubkey = RSA.importKey(pubkey)
-        rsa_pubkey = PKCS1_OAEP.new(rsa_pubkey)
-        return rsa_pubkey.encrypt(text)
 
     def generateIV(self):
         return os.urandom(IV_SIZE)

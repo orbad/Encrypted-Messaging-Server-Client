@@ -2,7 +2,6 @@
     ID: 316307586 """
 
 import os
-from Crypto.PublicKey import RSA
 from Crypto.Cipher import PKCS1_OAEP, AES
 from Crypto.Util.Padding import pad, unpad
 
@@ -15,12 +14,6 @@ class Encryptor:
     def __init__(self) -> None:
         self.iv = b'\x00' * AES.block_size
         self.key = os.urandom(AES_KEY_SIZE)
-
-    def encryptPubKey(self, text: bytes, pubkey: bytes) -> bytes:
-        """ Encrypts the text using a given public RSA key """
-        rsa_pubkey = RSA.importKey(pubkey)
-        rsa_pubkey = PKCS1_OAEP.new(rsa_pubkey)
-        return rsa_pubkey.encrypt(text)
 
     def generateNonce(self):
         return os.urandom(NONCE_SIZE)
@@ -39,8 +32,9 @@ class Encryptor:
         try:
             return unpad(raw, AES.block_size)
         except ValueError:
-            print("Decryption failed: Padding is incorrect. Check the key and IV.\nExisting..")
-            exit(1)
+            if(len(text)>AES_KEY_SIZE): # In order to avoid double printing of ValueError, only enc_AES_KEY should pass this condition.
+                print("Decryption failed: Password is incorrect. \nRetry..")
+            return None
 
     def encryptAES(self, text: bytes, aeskey: bytes, iv: bytes) -> bytes:
         """ Encrypts the text using a given AES key and IV """

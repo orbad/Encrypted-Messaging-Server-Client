@@ -8,6 +8,4 @@ import utils
 if __name__ == '__main__':
     msgServer = server.Server()
     msgServer.address, msgServer.port, msgServer.host, msgServer.srvUUID, msgServer.AESKey = utils.getPort('msg.info')
-    # port = utils.getPort('msg.info')
-    # myServer = server.Server('', port)
     msgServer.run()

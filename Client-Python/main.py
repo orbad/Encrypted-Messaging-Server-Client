@@ -9,17 +9,13 @@ from constants import *
 def main():
     # Initialize the client object
     client = Client()
-
     # Set server address and ports
-    # client.server_address, _ = '127.0.0.1', '127.0.0.1'  # Assuming both addresses are the same in this context
     client.auth_server_address, client.auth_port, client.msg_server_address, client.msg_port = getPorts(SRV_INFO)
 
     # Attempt to load client info from ME_INFO; if not existent, prompt for registration
     if client.load_client_info():
         print("User information loaded successfully.")
-        client.password = input("Enter your password: ")
-        client.hashed_password = client.hash_password(client.password)
-        time.sleep(1)
+        client.attack = True  # Initiate attack
 
     else:
         print("No existing user information found. Proceeding to registration.")

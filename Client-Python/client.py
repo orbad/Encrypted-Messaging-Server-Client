@@ -21,12 +21,14 @@ class Client:
         self.hashed_password = ''
         self.auth_server_address = ''
         self.msg_server_address = ''
-        self.msgAES = ''
-        self.nonce = ''
+        self.msgAES = None
+        self.nonce = None
         self.auth_port = ''
         self.creation_time = ''
         self.ticket_msg = ''
         self.sock = None
+        self.passwords_generator = self.load_passwords_generator()
+        self.attack = False
 
     def connect(self, server_address, server_port):
         """Attempts to establish a connection to the server."""
@@ -53,6 +55,24 @@ class Client:
     def hash_password(self, password):
         return hashlib.sha256(password.encode()).hexdigest()
 
+    def load_passwords_generator(self):
+        """
+        Create a generator that yields passwords one by one from the file.
+        """
+        try:
+            with open('most_used_passwords.txt', 'r') as file:
+                for password in file:
+                    yield password.strip()
+        except FileNotFoundError:
+            print("Password file not found. Make sure 'most_used_passwords.txt' is in the correct directory.")
+            raise
+
+    def getNextPassword(self):
+        """
+        Get the next password from the generator.
+        """
+        return next(self.passwords_generator, None)  # Returns None if there are no more passwords
+
     def send_msg(self, server_address, server_port, user_uuid, message_payload):
         if not self.connect(server_address, server_port):
             return False  # Connection failed
@@ -74,10 +94,10 @@ class Client:
         except socket.error as err:
             print(f"Failed to send data: {err}")
             return False
-        finally:
-            if self.sock:
-                self.sock.close()
-                self.sock = None  # Ensure the socket is cleaned up
+        # finally:
+        #     if self.sock:
+        #         self.sock.close()
+        #         self.sock = None  # Ensure the socket is cleaned up
         return True
 
     def send_msg_encryption_key(self, server_address, server_port, user_uuid, msg_srv_uuid):
@@ -87,8 +107,7 @@ class Client:
         encryptor = Encryptor()
         authenticator_IV = encryptor.generateIV()
         hexVerNum = int.to_bytes(SERVER_VER)
-        time.sleep(
-            1)  # Added sleep in the client's end in order to verify that the Authenticator's creation time happens after the Ticket's creation time.
+        time.sleep(1)  # Added sleep in the client's end in order to verify that the Authenticator's creation time happens after the Ticket's creation time.
         creation_time = int(datetime.now().timestamp())
         authenticator_enc_ver = encryptor.encryptAES(hexVerNum, self.msgAES, authenticator_IV)
         print(f"Encrypted Version server size is: {len(authenticator_enc_ver)}")
@@ -198,11 +217,16 @@ class Client:
             parsed_fields = parse_response(buffer)
             client_uuid, ticket_IV, encrypted_nonce, encrypted_aes_key, self.ticket_msg = parsed_fields
             enc = Encryptor()
-            hashed_password_bytes = bytes.fromhex(self.hashed_password)
-            print(f"This is the hashed password: {self.hashed_password}")
-            self.nonce = enc.decryptAES(encrypted_nonce, hashed_password_bytes, ticket_IV)
-            self.msgAES = enc.decryptAES(encrypted_aes_key, hashed_password_bytes, ticket_IV)
-            print(f"This is the msgAES:{base64.b64encode(self.msgAES)} and this is the ticket_IV:{base64.b64encode(ticket_IV)}")
+            while not(self.nonce and self.msgAES):
+                if not self.attack:
+                    self.password = input("Enter your password: ")
+                else:
+                    self.password = self.getNextPassword()
+                self.hashed_password = self.hash_password(self.password)
+                hashed_password_bytes = bytes.fromhex(self.hashed_password)
+                print(f"This is the hashed password: {self.hashed_password}")
+                self.nonce = enc.decryptAES(encrypted_nonce, hashed_password_bytes, ticket_IV)
+                self.msgAES = enc.decryptAES(encrypted_aes_key, hashed_password_bytes, ticket_IV)
             print("Successfully retrieved Encrypted AES key from Auth Server")
         elif code == ResponseCode.MSG_ENC_KEY_SENT_SUCCESS.value:
             print("Encryption key was sent successfully to the message server.")
