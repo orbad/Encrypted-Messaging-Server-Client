@@ -1,6 +1,3 @@
-""" Name: Or Badani
-    ID: 316307586 """
-
 import os
 from Crypto.Cipher import PKCS1_OAEP, AES
 from Crypto.Util.Padding import pad, unpad

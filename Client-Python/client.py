@@ -18,6 +18,7 @@ class Client:
         self.uuid = ''
         self.username = ''
         self.password = ''
+        self.login = False
         self.hashed_password = ''
         self.auth_server_address = ''
         self.msg_server_address = ''
@@ -110,13 +111,10 @@ class Client:
         time.sleep(1)  # Added sleep in the client's end in order to verify that the Authenticator's creation time happens after the Ticket's creation time.
         creation_time = int(datetime.now().timestamp())
         authenticator_enc_ver = encryptor.encryptAES(hexVerNum, self.msgAES, authenticator_IV)
-        print(f"Encrypted Version server size is: {len(authenticator_enc_ver)}")
         authenticator_enc_user_uuid = encryptor.encryptAES(bytes.fromhex(self.uuid), self.msgAES, authenticator_IV)
         authenticator_enc_srv_uuid = encryptor.encryptAES(bytes.fromhex(msg_srv_uuid), self.msgAES, authenticator_IV)
         authenticator_enc_creationTime = encryptor.encryptAES((creation_time).to_bytes(8, 'little'), self.msgAES,
                                                               authenticator_IV)
-        print(
-            f"Enc_ver: {authenticator_enc_ver}, Enc_user_uuid: {authenticator_enc_user_uuid}, enc_Srv_uuid: {authenticator_enc_srv_uuid}, enc_creationTime:{authenticator_enc_creationTime}")
         authenticator = authenticator_IV + authenticator_enc_ver + authenticator_enc_user_uuid + authenticator_enc_srv_uuid + authenticator_enc_creationTime
         authenticator_size = len(authenticator)
         # Prepare the request payload
@@ -157,9 +155,6 @@ class Client:
             return False  # Connection failed
         encryptor = Encryptor()
         nonce = encryptor.generateNonce()
-        print(f"Sending the following UUID: \n{msg_srv_uuid}.\n")
-        print(f"Sending the following NONCE: \n{nonce.hex()}.\n")
-        print(f"From the UUID: \n{user_uuid}.\n")
 
         # Convert UUID and nonce from hex to binary
         msg_srv_uuid_bin = bytes.fromhex(msg_srv_uuid)
@@ -185,6 +180,7 @@ class Client:
         # Send the packet
         try:
             self.sock.sendall(packet)
+            print(f"Requesting Encrypted AES-Key in order to communicate with the Message Server")
             self.handle_server_response()  # Process server response
         except socket.error as err:
             print(f"Failed to send data: {err}")
@@ -217,14 +213,22 @@ class Client:
             parsed_fields = parse_response(buffer)
             client_uuid, ticket_IV, encrypted_nonce, encrypted_aes_key, self.ticket_msg = parsed_fields
             enc = Encryptor()
+            attack_attempt = 0
             while not(self.nonce and self.msgAES):
                 if not self.attack:
-                    self.password = input("Enter your password: ")
+                    if self.login:
+                        self.password = input("Enter your password: ")
                 else:
                     self.password = self.getNextPassword()
+                    attack_attempt += 1
+                    print(f"This is attempt no.{attack_attempt} on cracking {self.username}'s password")
+                    if self.password is None:
+                        print(f"The attack upon the username: {self.username} has failed, no more passwords to guess..."
+                              f"from.")
+                        exit(1)
                 self.hashed_password = self.hash_password(self.password)
                 hashed_password_bytes = bytes.fromhex(self.hashed_password)
-                print(f"This is the hashed password: {self.hashed_password}")
+                print(f"AES Key + Ticket was received successfully from the Authentication Server.")
                 self.nonce = enc.decryptAES(encrypted_nonce, hashed_password_bytes, ticket_IV)
                 self.msgAES = enc.decryptAES(encrypted_aes_key, hashed_password_bytes, ticket_IV)
             print("Successfully retrieved Encrypted AES key from Auth Server")

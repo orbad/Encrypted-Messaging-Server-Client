@@ -1,6 +1,3 @@
-""" Name: Or Badani
-    ID: 316307586 """
-
 from constants import *
 import os
 

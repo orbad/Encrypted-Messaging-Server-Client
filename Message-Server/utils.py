@@ -1,5 +1,3 @@
-""" Name: Or Badani
-    ID: 316307586 """
 from datetime import datetime
 import struct
 
@@ -35,7 +33,7 @@ def parse_authenticator(payload):
     server_version = payload[offset:offset + IV_SIZE]
     offset += IV_SIZE
 
-    # Extract Encrypted Nonce (assuming its size is the same as IV for illustration)
+    # Extract Encrypted Nonce
     enc_user_UUID = payload[offset:offset + ENC_UUID_SIZE]
     offset += ENC_UUID_SIZE
 
@@ -49,14 +47,8 @@ def parse_authenticator(payload):
     return (enc_key_iv, server_version, enc_user_UUID, enc_server_UUID, enc_creation_time)
 
 def parse_ticket(ticket_raw):
- #   offset = 0
 
-    # Ticket parsing (simplified, assuming fixed size; adjust as needed)
- #   ticket_raw = payload[offset:offset + TICKET_SIZE]
     ticket_offset = 0
-    # Assuming ticket includes version, UUIDs, server ID, timestamps, and encrypted info
-    # You would need to know the exact structure of your ticket to parse it correctly
-    # This is just an illustrative example
     ticket_version, = struct.unpack('<B', ticket_raw[ticket_offset:ticket_offset + SERVER_VERSION_SIZE])
     ticket_offset += SERVER_VERSION_SIZE
 
@@ -73,7 +65,6 @@ def parse_ticket(ticket_raw):
     ticket_offset += IV_SIZE
 
     enc_server_AES = ticket_raw[ticket_offset: ticket_offset + ENC_AES_SIZE]
-    print(f"This is the encrypted server AES: {enc_server_AES}")
     ticket_offset += ENC_AES_SIZE
 
     enc_expiration_time = ticket_raw[ticket_offset:ticket_offset + ENC_TIMESTAMP_SIZE]
@@ -82,7 +73,7 @@ def parse_ticket(ticket_raw):
     return (ticket_version, client_UUID, server_UUID, creation_time, ticket_iv, enc_server_AES, enc_expiration_time)
 
 
-def verify_and_respond(auth_client_uuid, auth_server_uuid, auth_creation_time, ticket_client_uuid, ticket_server_uuid, ticket_creation_time, ticket_expiration_time):
+def verify_and_respond(auth_client_uuid, auth_server_uuid, auth_creation_time, auth_ver_dec, ticket_client_uuid, ticket_server_uuid, ticket_creation_time, ticket_expiration_time, ticket_ver_dec):
     # Convert UUIDs from bytes to hex strings for comparison
     time_now = datetime.now().timestamp()
     auth_client_uuid_hex = auth_client_uuid.hex()
@@ -95,6 +86,11 @@ def verify_and_respond(auth_client_uuid, auth_server_uuid, auth_creation_time, t
         print("Error: UUIDs in the authenticator do not match those in the ticket.")
         return False
 
+    # Verify that Authenticator version and Ticket version match
+    if auth_ver_dec != ticket_ver_dec:
+        print("Authenticator and Ticket versions are different, cannot authenticate the user.")
+        return False
+
     # Verify that the authenticator's creation time is above the ticket's creation time
     if auth_creation_time <= ticket_creation_time:
         print("Error: Authenticator's creation time is not above the ticket's creation time.")
@@ -102,10 +98,8 @@ def verify_and_respond(auth_client_uuid, auth_server_uuid, auth_creation_time, t
     if time_now > ticket_expiration_time:
         print("The ticket has already expired, authentication cannot be made.")
         return False
-    # If all checks pass, proceed with your logic to acknowledge the AES key send
-    # For example, send a success response or the next expected message
+    # If all checks pass, proceed with verification logic to acknowledge the AES key send
     print("Verification successful. Proceeding with the communication.")
-    # Implement the success response logic here
     return True
 
 def sendPacket(socket, buffer):

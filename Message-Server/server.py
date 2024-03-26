@@ -1,5 +1,3 @@
-""" Name: Or Badani
-    ID: 316307586 """
 import base64
 import socket
 import time
@@ -17,7 +15,6 @@ print_lock = threading.Lock()
 
 
 class Server:
-    MAX_TRIES = 3
 
     def __init__(self) -> None:
         self.address = ''
@@ -81,12 +78,8 @@ class Server:
     def gotMessage(self, conn, currRequest):
         encryptor = Encryptor()
         self.loggedUser = True
-        authenticator = None
-        ticket = None
+
         try:
-            payloadSize = currRequest.payloadSize
-            code = currRequest.code
-            version = currRequest.version
             connected_user_UUID = currRequest.uuid.hex()
 
             # Extract the payload
@@ -104,9 +97,10 @@ class Server:
                 print(f'Error decoding payload: {e}')
                 # Handle decoding error (e.g., send an error response back to the client)
                 return
-            auth_creation_time_dec = int.from_bytes(message_size_bytes, 'little')
             message_decrypted = encryptor.decryptAES(enc_message, self.user_AESKey, messageIV).decode("utf-8")
-            print(f"The user (UUID:{connected_user_UUID}) has sent:\n{message_decrypted}\n")
+            now = datetime.now()
+            time_string = now.strftime("%H:%M:%S")
+            print(f"({time_string}) - The user (UUID:{connected_user_UUID}) has sent:\n{message_decrypted}\n")
             currResponse.payloadSize = 0
             data = currResponse.littleEndianPack()
         except Exception as e:
@@ -143,9 +137,8 @@ class Server:
             enc_key_iv, server_version, enc_client_UUID, enc_server_UUID, enc_creation_time = authenticator_parsed
             ticket_parsed = parse_ticket(ticket_encrypted)
             ticket_version, client_UUID, server_UUID, creation_time, ticket_iv, enc_server_AES, enc_expiration_time = ticket_parsed
-            print(f"This is the ticket's AESKey:\n{self.ticket_AESKey}\nAnd this is the ticket_iv:{base64.b64encode(ticket_iv)}")
             self.user_AESKey = encryptor.decryptAES(enc_server_AES, self.ticket_AESKey, ticket_iv)
-            auth_ver_decrypted = encryptor.decryptAES(server_version, self.user_AESKey, enc_key_iv)
+            auth_ver_decrypted = int.from_bytes(encryptor.decryptAES(server_version, self.user_AESKey, enc_key_iv))
             auth_client_UUID_dec = encryptor.decryptAES(enc_client_UUID, self.user_AESKey, enc_key_iv)
             auth_server_UUID_dec = encryptor.decryptAES(enc_server_UUID, self.user_AESKey, enc_key_iv)
             auth_creation_time_dec_bytes = encryptor.decryptAES(enc_creation_time, self.user_AESKey, enc_key_iv)
@@ -154,14 +147,13 @@ class Server:
             ticket_client_UUID = client_UUID
             ticket_server_UUID = server_UUID
             ticket_creation_time = creation_time
-            #client_msg_AES_decrypted = encryptor.decryptAES(enc_server_AES, self.AESKey, ticket_iv)
             ticket_expiration_time_decrypted = encryptor.decryptAES(enc_expiration_time, self.ticket_AESKey, ticket_iv)
-            verified_user = verify_and_respond(auth_client_UUID_dec, auth_server_UUID_dec, auth_creation_time_dec, ticket_client_UUID, ticket_server_UUID, ticket_creation_time, int.from_bytes(ticket_expiration_time_decrypted))
+            verified_user = verify_and_respond(auth_client_UUID_dec, auth_server_UUID_dec, auth_creation_time_dec, auth_ver_decrypted, ticket_client_UUID, ticket_server_UUID, ticket_creation_time, int.from_bytes(ticket_expiration_time_decrypted), ticket_version_dec)
 
             if verified_user:
                 currResponse.payloadSize = 0
                 data = currResponse.littleEndianPack()
-                print("AES KEY WAS Received successfully!")
+                print(f"AES KEY was Received Successfully from User: {connected_user_UUID}")
             else:
                 currResponse.code = ResponseCode.GENERAL_ERROR.value
                 currResponse.payloadSize = 0

@@ -1,10 +1,5 @@
-""" Name: Or Badani
-    ID: 316307586 """
-
 import os.path
 from constants import *
-import sqlite3
-import binascii
 
 
 class Database:
@@ -65,22 +60,6 @@ class Database:
                 return client[2]
         if not found:
             print(f"Failed login attempt with uuid: {uuid}, the username or password is incorrect.")
-        return None
-
-    def getUserInfo(self, username, hashed_password):
-        """Retrieves user information based on the username."""
-        found = False
-        for client in self.clients:
-            if client[1] == username and client[2] == hashed_password:
-                found = True
-                return {
-                    "UUID": client[0],
-                    "Name": client[1],
-                    "PasswordHash": client[2],
-                    "LastSeen": client[3]
-                }
-        if not found:
-            print(f"Failed login attempt with username: {username}, the username or password is incorrect.")
         return None
 
     def updateLastSeen(self, uuid, lastSeen):
