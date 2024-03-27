@@ -1,2 +1,2 @@
 # Encrypted-Messaging-Server-Client
-Encrypted Messaging Server Client based on Kerberos Authentican Protocol
+Encrypted Messaging Server Client based on Kerberos Authentication Protocol
